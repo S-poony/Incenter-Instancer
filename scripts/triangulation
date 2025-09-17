@@ -1,0 +1,126 @@
+import matplotlib
+matplotlib.use("TkAgg") 
+
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from shapely.ops import triangulate
+from shapely.geometry import Polygon, MultiPolygon
+import os
+import glob
+import pandas as pd
+
+# ==================== INGEST ====================
+# Load a shapefile from a folder
+shapefile_path = "/Users/noelojkine-acrosslab/Desktop/LULUT/LULUT_BEYOND/MyGISProject/data/QuangBinh_shapefiles/buildings.shp"
+geodata = gpd.read_file(shapefile_path)
+print(f"Loaded {len(geodata)} geometries from {shapefile_path}")
+
+folder = "/Users/noelojkine-acrosslab/Desktop/LULUT/LULUT_BEYOND/MyGISProject/data/QuangBinh_shapefiles"
+shps = sorted(glob.glob(os.path.join(folder, "*.shp")))
+if not shps:
+    raise FileNotFoundError(f"No .shp files found in {folder}")
+
+# lire et concatener en preservant le CRS du premier
+gdfs = []
+for p in shps:
+    gdfs.append(gpd.read_file(p))
+geodata = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True))
+# si necessaire forcer le CRS commun :
+geodata.set_crs(gdfs[0].crs, allow_override=True, inplace=True)
+print(f"Loaded {len(shps)} shapefiles, total rows: {len(geodata)}")
+
+# ==================== PROCESS (Shapely only) ====================
+MAXAREA = 25000    # max area threshold
+MINAREA = 100       # min area threshold
+MAX_TRIS = 100000  # safety cap
+
+def split_triangle_centroid(tri):
+    """Split triangle using centroid for better quality triangles."""
+    coords = list(tri.exterior.coords)[:-1]
+    if len(coords) != 3:
+        return []
+    
+    centroid = tri.centroid
+    cx, cy = centroid.x, centroid.y
+    
+    return [
+        Polygon([coords[0], coords[1], (cx, cy)]),
+        Polygon([coords[1], coords[2], (cx, cy)]), 
+        Polygon([coords[2], coords[0], (cx, cy)])
+    ]
+
+def triangulate_geometry(geom):
+    """Triangulate and refine a geometry with strict area constraints."""
+    triangles = []
+    if geom is None or geom.is_empty:
+        return triangles
+    
+    # Handle MultiPolygon vs Polygon
+    polys = geom.geoms if isinstance(geom, MultiPolygon) else [geom]
+
+    for poly in polys:
+        if not isinstance(poly, Polygon) or poly.is_empty:
+            continue
+        try:
+            # Initial triangulation
+            initial_triangles = [t for t in triangulate(poly) if t.area > 0]
+            stack = initial_triangles.copy()
+        except Exception as e:
+            print(f"Triangulation failed for polygon: {e}")
+            continue
+
+        # Process stack until all triangles meet area constraints
+        iterations = 0
+        max_iterations = 1000  # Prevent infinite loops
+        
+        while stack and len(triangles) < MAX_TRIS and iterations < max_iterations:
+            iterations += 1
+            t = stack.pop()
+            
+            if t.area > MAXAREA:
+                # Split and recursively check each new triangle
+                new_triangles = split_triangle_centroid(t)
+                # Re-check each new triangle
+                for new_tri in new_triangles:
+                    if new_tri.area > MAXAREA:
+                        stack.append(new_tri)  # Needs further splitting
+                    elif new_tri.area >= MINAREA:
+                        triangles.append(new_tri)  # Good to keep
+            elif t.area >= MINAREA:  # keep only if big enough
+                triangles.append(t)
+
+            if len(triangles) >= MAX_TRIS:
+                break
+        
+        if iterations >= max_iterations:
+            print(f"Warning: Hit max iterations for polygon, some triangles may still be oversized")
+    
+    return triangles
+
+# === RUN ===
+triangles = []
+for geom in geodata.geometry:
+    triangles.extend(triangulate_geometry(geom))
+    if len(triangles) >= MAX_TRIS:
+        break
+
+print(f"PROCESS COMPLETE: {len(triangles)} triangles")
+
+
+# ==================== VISUALIZE ====================
+# Render original polygons and triangulation result
+fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+
+# Left: Original geometries
+geodata.boundary.plot(ax=ax[0], color="black")
+ax[0].set_title("Original Shapes")
+
+# Right: Triangulated result
+for tri in triangles:
+    x, y = tri.exterior.xy
+    ax[1].fill(x, y, edgecolor="black", facecolor="lightblue", alpha=0.6)
+ax[1].set_title("Triangulated Shapes")
+ax[1].set_aspect('equal')  # Fix: ensures proper top-down view
+
+plt.tight_layout()
+plt.show()

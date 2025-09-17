@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""
+Debug-heavy dummy script that draws a square using matplotlib.
+Plenty of prints to diagnose backend, tkinter, save location, etc.
+"""
+
+import sys
+import os
+import traceback
+import time
+
+print("======== DEBUG PLOT SQUARE START ========")
+print("Time:", time.ctime())
+
+# 1) Print basic env info
+print("Python executable:", sys.executable)
+print("sys.argv:", sys.argv)
+try:
+    print("Current working directory:", os.getcwd())
+except Exception as e:
+    print("Could not get cwd:", e)
+print("Has __file__?:", "__file__" in globals())
+if "__file__" in globals():
+    print("__file__:", __file__)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+else:
+    script_dir = os.getcwd()
+print("Script dir (resolved):", script_dir)
+
+# 2) Matplotlib backend selection (must set BEFORE importing pyplot)
+import importlib
+print("\n--- Matplotlib import status before any action ---")
+print("matplotlib in sys.modules?", "matplotlib" in sys.modules)
+print("matplotlib.pyplot in sys.modules?", "matplotlib.pyplot" in sys.modules)
+
+if "matplotlib.pyplot" in sys.modules:
+    print("WARNING: matplotlib.pyplot already imported. Backend may be fixed already.")
+else:
+    try:
+        import matplotlib
+        # Try to set a GUI backend that usually works on desktops
+        try:
+            print("Attempting to set backend to TkAgg...")
+            matplotlib.use("TkAgg")
+            print("Requested backend: TkAgg")
+        except Exception as e:
+            print("Could not set TkAgg backend:", repr(e))
+            try:
+                print("Attempting to set Qt5Agg as fallback...")
+                matplotlib.use("Qt5Agg")
+                print("Requested backend: Qt5Agg")
+            except Exception as e2:
+                print("Could not set Qt5Agg backend either:", repr(e2))
+                print("Proceeding without forcing backend; pyplot will choose a default.")
+    except Exception as e:
+        print("Could not import matplotlib at all:", repr(e))
+
+# 3) Now import pyplot
+try:
+    import matplotlib.pyplot as plt
+    print("Imported matplotlib.pyplot successfully.")
+    try:
+        import matplotlib
+        print("matplotlib.get_backend():", matplotlib.get_backend())
+    except Exception as e:
+        print("Could not call matplotlib.get_backend():", e)
+except Exception as e:
+    print("Failed to import matplotlib.pyplot:", e)
+    traceback.print_exc()
+    print("Exiting early because matplotlib is essential for this script.")
+    sys.exit(1)
+
+# 4) Tkinter test (GUI availability)
+print("\n--- Tkinter / GUI availability test ---")
+try:
+    import tkinter
+    print("tkinter imported. TkVersion:", getattr(tkinter, "TkVersion", "unknown"))
+    # do not open a Tk window here, just test import
+except Exception as e:
+    print("tkinter import failed:", type(e).__name__, e)
+
+# 5) Very verbose list of some modules (helpful to see if something loaded earlier)
+interesting = ["matplotlib", "matplotlib.pyplot", "numpy", "shapely", "geopandas", "tkinter"]
+print("\n--- Module presence check ---")
+for mod in interesting:
+    print(f"{mod}: {'yes' if mod in sys.modules else 'no'}")
+
+# 6) Prepare the figure (force-close all previous figures)
+try:
+    plt.close("all")
+    print("\nplt.close('all') executed.")
+except Exception as e:
+    print("plt.close('all') failed:", e)
+
+# 7) Draw a simple square (unit square scaled) with debug prints
+print("\n--- Preparing data for square ---")
+square_coords = [(0, 0), (1, 0), (1, 1), (0, 1)]
+print("Square coords:", square_coords)
+
+try:
+    fig, ax = plt.subplots(figsize=(6, 6))
+    print("Created figure and axes:", fig, ax)
+except Exception as e:
+    print("Failed to create figure/axes:", e)
+    traceback.print_exc()
+    sys.exit(1)
+
+try:
+    # Draw filled square
+    xs = [p[0] for p in square_coords] + [square_coords[0][0]]
+    ys = [p[1] for p in square_coords] + [square_coords[0][1]]
+    print("XS:", xs)
+    print("YS:", ys)
+    ax.fill(xs, ys, edgecolor="black", facecolor="cyan", alpha=0.6)
+    print("Filled polygon added to axes.")
+    # Add a border line
+    ax.plot(xs, ys, linestyle='-', linewidth=1, color='black')
+    print("Border line drawn.")
+    ax.set_aspect('equal', adjustable='box')
+    ax.set_title("Debug: Unit Square")
+    ax.set_xlim(-0.2, 1.2)
+    ax.set_ylim(-0.2, 1.2)
+    ax.grid(True, linestyle='--', linewidth=0.4)
+    print("Axes configured (limits, aspect, grid).")
+except Exception as e:
+    print("Error drawing square:", e)
+    traceback.print_exc()
+
+# 8) Diagnostics before saving/showing
+print("\n--- Before saving/show ---")
+try:
+    print("Number of axes in figure:", len(fig.axes))
+    print("Figure size (inches):", fig.get_size_inches())
+    print("DPI:", fig.dpi)
+except Exception as e:
+    print("Could not read figure properties:", e)
+
+# 9) Save to a deterministic absolute path next to this script
+out_filename = "debug_square_output.png"
+out_path = os.path.join(script_dir, out_filename)
+print("\nSaving image to:", out_path)
+try:
+    plt.savefig(out_path, dpi=300)
+    print("plt.savefig executed without raising.")
+    if os.path.exists(out_path):
+        try:
+            size = os.path.getsize(out_path)
+            print("Saved file exists. Size (bytes):", size)
+        except Exception as e:
+            print("Saved file exists but could not stat size:", e)
+    else:
+        print("Saved file does NOT exist after plt.savefig (unexpected).")
+except Exception as e:
+    print("plt.savefig raised an exception:", type(e).__name__, e)
+    traceback.print_exc()
+
+# 10) Try to show the figure (blocks until window closed when GUI available)
+print("\nCalling plt.show(block=True) ...")
+try:
+    start_show = time.time()
+    plt.show(block=True)
+    end_show = time.time()
+    print("plt.show() returned after", end_show - start_show, "seconds.")
+except Exception as e:
+    print("plt.show() raised an exception:", type(e).__name__, e)
+    traceback.print_exc()
+
+print("\nPost-show checks:")
+try:
+    print("Is figure closed? (not directly queryable, but attempting to draw):")
+    fig.canvas.draw_idle()
+    print("fig.canvas.draw_idle() succeeded.")
+except Exception as e:
+    print("fig.canvas.draw_idle() failed:", e)
+
+print("You should find the saved image at:", out_path)
+print("If the GUI window didn't appear, check tkinter availability and backend selection.")
+print("======== DEBUG PLOT SQUARE END ========")
